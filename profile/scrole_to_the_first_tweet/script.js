@@ -1,142 +1,250 @@
 (function() {
     let scrollCount = 0;
     let lastTweetCount = 0;
-    let noNewContentCount = 0;
+    let stagnantChecks = 0;
     let isRunning = true;
     let intervalId;
-    let animationId;
+    let mutationObserver;
+    let lastContentHeight = 0;
     
-    console.log("🚀 Starting background-resistant scroll...");
-    console.log("⚠️  This version tries to work in background, but may be slower");
     
-    // Count tweets with multiple selectors
+    // Optimized selectors for X/Twitter
+    const TWEET_SELECTORS = [
+        '[data-testid="tweet"]',
+        'article[data-testid="tweet"]',
+        '[role="article"][data-testid="tweet"]'
+    ];
+    
+    // Count tweets efficiently
     function countTweets() {
-        const selectors = [
-            '[data-testid="tweet"]',
-            'article[data-testid="tweet"]',
-            '[role="article"]',
-            'div[data-testid="cellInnerDiv"]'
-        ];
-        
-        let maxCount = 0;
-        selectors.forEach(selector => {
-            const count = document.querySelectorAll(selector).length;
-            maxCount = Math.max(maxCount, count);
-        });
-        
-        return maxCount;
+        return document.querySelectorAll(TWEET_SELECTORS[0]).length;
     }
     
-    // Force browser activity to prevent throttling
-    function keepAlive() {
-        // Tiny DOM manipulation to keep JS active
-        document.title = document.title;
+    // Fast new content detection
+    function hasNewContent() {
+        const currentHeight = document.body.scrollHeight;
+        const currentTweets = countTweets();
         
-        // Request next animation frame
-        if (isRunning) {
-            animationId = requestAnimationFrame(keepAlive);
+        if (currentHeight > lastContentHeight || currentTweets > lastTweetCount) {
+            lastContentHeight = currentHeight;
+            lastTweetCount = currentTweets;
+            return true;
         }
+        return false;
     }
     
-    // Main scroll function using multiple timing methods
-    function performScroll() {
+    function aggressiveScroll() {
         if (!isRunning) return;
         
-        const beforeScroll = window.pageYOffset;
-        const beforeCount = countTweets();
+        const currentScroll = window.pageYOffset;
+        const maxScroll = document.body.scrollHeight - window.innerHeight;
         
-        // Scroll to bottom
-        window.scrollTo(0, document.body.scrollHeight);
-        scrollCount++;
+        // Scroll in big chunks for speed, but adaptive
+        const baseStep = window.innerHeight * 1.5;
+        const adaptiveStep = Math.min(baseStep, maxScroll - currentScroll);
         
-        console.log(`📜 Scroll #${scrollCount} - Tweets: ${beforeCount}`);
-        
-        // Check for new content after delay
-        setTimeout(() => {
-            const currentTweetCount = countTweets();
-            const scrollAtBottom = (window.innerHeight + window.pageYOffset >= document.body.offsetHeight - 50);
+        if (adaptiveStep > 100) {
+            window.scrollBy(0, adaptiveStep);
+            scrollCount++;
             
-            if (currentTweetCount === lastTweetCount && scrollAtBottom) {
-                noNewContentCount++;
-                console.log(`⏳ No new content (${noNewContentCount}/7) - Tab active: ${!document.hidden}`);
-                
-                if (noNewContentCount >= 7) {
-                    console.log("✅ Finished! Stopping all timers...");
-                    stopAllTimers();
-                    window.scrollBy(0, -300);
-                    return;
-                }
-            } else {
-                noNewContentCount = 0;
-                lastTweetCount = currentTweetCount;
-                console.log(`✨ New content: ${currentTweetCount} tweets`);
-            }
-        }, 2000);
+            console.log(`📜 Scroll #${scrollCount} - Tweets: ${countTweets()}`);
+            
+            // Adaptive delay: the more we've scrolled, the longer we wait
+            const checkDelay = Math.min(1000, 300 + (scrollCount > 50 ? 200 : 0));
+            setTimeout(checkProgress, checkDelay);
+        } else {
+            // We're near the bottom, scroll to the end and wait longer
+            window.scrollTo(0, document.body.scrollHeight);
+            console.log("📍 Scrolled to bottom - Waiting for content to load...");
+            setTimeout(checkProgress, 1500); // Longer wait at bottom
+        }
     }
     
-    // Stop all running timers
-    function stopAllTimers() {
+    // Progress check with progressive patience
+    function checkProgress() {
+        if (!isRunning) return;
+        
+        const isAtBottom = (window.innerHeight + window.pageYOffset >= document.body.offsetHeight - 100);
+        const currentTweets = countTweets();
+        
+        if (hasNewContent()) {
+            stagnantChecks = 0;
+            console.log(`✨ New content detected: ${currentTweets} tweets`);
+            // Continue immediately
+            setTimeout(aggressiveScroll, 100);
+        } else if (isAtBottom) {
+            stagnantChecks++;
+            
+            // Progressive waiting: the more we wait, the more patient we become
+            const maxChecks = Math.min(12, 5 + Math.floor(scrollCount / 20)); // Increases with scroll count
+            const waitTime = Math.min(8000, 1500 + (stagnantChecks * 800)); // Progressive wait
+            
+            console.log(`⏳ No new content (${stagnantChecks}/${maxChecks}) - Wait time: ${waitTime}ms`);
+            
+            if (stagnantChecks >= maxChecks) {
+                // Final verification with long delay
+                console.log("🔍 Final verification... Waiting 10 seconds");
+                setTimeout(() => {
+                    const finalTweets = countTweets();
+                    if (finalTweets === currentTweets && 
+                        (window.innerHeight + window.pageYOffset >= document.body.offsetHeight - 50)) {
+                        console.log("✅ End of profile confirmed after final verification!");
+                        stopScrolling();
+                        window.scrollTo(0, 0); // Back to top
+                    } else {
+                        console.log("🔄 New tweets found during final verification, continuing!");
+                        stagnantChecks = 0;
+                        setTimeout(aggressiveScroll, 500);
+                    }
+                }, 10000);
+                return;
+            }
+            
+            // Force scroll with progressive waiting
+            setTimeout(() => {
+                window.scrollBy(0, 500);
+                // Double scroll to be sure
+                setTimeout(() => {
+                    window.scrollTo(0, document.body.scrollHeight);
+                    setTimeout(checkProgress, waitTime);
+                }, 500);
+            }, waitTime);
+        } else {
+            // Continue scrolling
+            setTimeout(aggressiveScroll, 200);
+        }
+    }
+    
+    // Observe DOM mutations to detect new content instantly
+    function setupMutationObserver() {
+        const timeline = document.querySelector('[data-testid="primaryColumn"]') || 
+                        document.querySelector('main') || 
+                        document.body;
+        
+        mutationObserver = new MutationObserver((mutations) => {
+            let hasNewTweets = false;
+            let newContentDetected = false;
+            
+            mutations.forEach(mutation => {
+                if (mutation.addedNodes.length > 0) {
+                    mutation.addedNodes.forEach(node => {
+                        if (node.nodeType === 1) {
+                            // Broader detection of new content
+                            if ((node.matches && node.matches('[data-testid="tweet"]')) ||
+                                (node.querySelector && node.querySelector('[data-testid="tweet"]')) ||
+                                (node.matches && node.matches('[data-testid="cellInnerDiv"]')) ||
+                                (node.querySelector && node.querySelector('[data-testid="cellInnerDiv"]'))) {
+                                hasNewTweets = true;
+                            }
+                            
+                            // General detection of new content
+                            if (node.offsetHeight > 50 || node.children.length > 0) {
+                                newContentDetected = true;
+                            }
+                        }
+                    });
+                }
+            });
+            
+            if ((hasNewTweets || newContentDetected) && isRunning) {
+                console.log("🔥 New content detected by MutationObserver");
+                stagnantChecks = Math.max(0, stagnantChecks - 2); // Reduce counter
+                
+                // Small delay to let content load completely
+                setTimeout(() => {
+                    lastContentHeight = document.body.scrollHeight;
+                    lastTweetCount = countTweets();
+                }, 300);
+            }
+        });
+        
+        mutationObserver.observe(timeline, {
+            childList: true,
+            subtree: true,
+            attributes: false // Only monitor additions/removals
+        });
+    }
+    
+    // Optimized start function
+    function startFastScrolling() {
+        lastContentHeight = document.body.scrollHeight;
+        lastTweetCount = countTweets();
+        
+        // Setup mutation observer for instant detection
+        setupMutationObserver();
+        
+        // Start with immediate scroll
+        aggressiveScroll();
+        
+        // Less frequent backup interval (more patient)
+        intervalId = setInterval(() => {
+            if (isRunning) {
+                console.log("🔄 Backup interval - Force scroll");
+                aggressiveScroll();
+            }
+        }, 4000);
+        
+        console.log("⚡ Patient and intelligent scrolling activated!");
+        console.log("🧠 Progressive waiting: 5-12 checks depending on profile size");
+    }
+    
+    // Stop function
+    function stopScrolling() {
         isRunning = false;
         if (intervalId) clearInterval(intervalId);
-        if (animationId) cancelAnimationFrame(animationId);
-        console.log("🛑 All timers stopped");
+        if (mutationObserver) mutationObserver.disconnect();
+        
+        console.log("🛑 Scrolling stopped");
+        console.log(`📊 Total: ${scrollCount} scrolls, ${countTweets()} tweets found`);
     }
     
-    // Start multiple timer strategies
-    function startScrolling() {
-        // Strategy 1: Regular interval (will be throttled in background)
-        intervalId = setInterval(performScroll, 3000);
+    // Turbo mode for even faster scrolling
+    function turboMode() {
+        console.log("🔥 TURBO MODE ACTIVATED!");
+        isRunning = true;
         
-        // Strategy 2: Animation frame to keep active
-        keepAlive();
-        
-        // Strategy 3: Immediate start
-        performScroll();
-        
-        console.log("⚡ Multiple timing strategies started");
-    }
-    
-    // Enhanced manual control
-    window.stopScrolling = function() {
-        stopAllTimers();
-        console.log("🛑 Manual stop executed");
-    };
-    
-    window.resumeScrolling = function() {
-        if (!isRunning) {
-            isRunning = true;
-            noNewContentCount = 0;
-            console.log("▶️  Resuming with fresh start...");
-            startScrolling();
-        }
-    };
-    
-    // Force continue even if detected as stuck
-    window.forceScroll = function(times = 5) {
-        console.log(`🔥 Force scrolling ${times} times...`);
-        for (let i = 0; i < times; i++) {
+        const turboScroll = () => {
+            if (!isRunning) return;
+            
+            window.scrollBy(0, window.innerHeight * 3);
+            
             setTimeout(() => {
-                window.scrollTo(0, document.body.scrollHeight);
-                console.log(`💪 Force scroll ${i + 1}/${times}`);
-            }, i * 1000);
-        }
-    };
+                if (window.innerHeight + window.pageYOffset >= document.body.offsetHeight - 50) {
+                    const newTweets = countTweets();
+                    if (newTweets === lastTweetCount) {
+                        console.log("✅ Turbo mode completed!");
+                        stopScrolling();
+                        return;
+                    }
+                    lastTweetCount = newTweets;
+                }
+                
+                setTimeout(turboScroll, 50); // Very fast!
+            }, 200);
+        };
+        
+        turboScroll();
+    }
     
-    // Visibility change handler
-    document.addEventListener('visibilitychange', function() {
-        console.log(`👁️  Tab visibility: ${document.hidden ? 'HIDDEN' : 'VISIBLE'}`);
-        if (!document.hidden && isRunning) {
-            // Give it a boost when tab becomes visible again
-            setTimeout(performScroll, 500);
+    // Public API
+    window.stopScrolling = stopScrolling;
+    window.resumeScrolling = startFastScrolling;
+    window.turboMode = turboMode;
+    
+    // Auto-restart if page becomes visible
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && !isRunning) {
+            console.log("👁️ Page visible - auto restart");
+            startFastScrolling();
         }
     });
     
-    // Start the process
-    startScrolling();
+    // Automatic start
+    startFastScrolling();
     
-    console.log("💡 Enhanced commands:");
-    console.log("   - stopScrolling() : Stop everything");
-    console.log("   - resumeScrolling() : Resume if stopped");
-    console.log("   - forceScroll(n) : Force n scrolls immediately");
-    console.log("📊 Strategy: Using intervals + animation frames + force scrolling");
+    console.log("💡 Available commands:");
+    console.log("   🛑 stopScrolling() - Stop");
+    console.log("   ▶️  resumeScrolling() - Resume");
+    console.log("   🔥 turboMode() - Ultra-fast mode");
+    console.log("📈 Optimizations: MutationObserver + Progressive patience + Final verification");
 })();

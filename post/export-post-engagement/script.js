@@ -1,188 +1,636 @@
-// Twitter Profile Auto-Scroll Script
-// Execute in browser console (F12) on any Twitter profile page
+// Manual tab-switching extraction for Twitter/X engagement
+// Execute in browser console (F12) on Twitter post's quotes or reposts tab
 
 // Display available options
 console.log(`
 ╔══════════════════════════════════════════════════════════════╗
-║                    🐦 TWITTER AUTO-SCROLL 🐦                 ║
+║            🐦 TWITTER ENGAGEMENT EXTRACTOR 🐦                ║
 ╠══════════════════════════════════════════════════════════════╣
 ║                                                              ║
 ║  📋 Available Methods:                                       ║
 ║                                                              ║
-║  1️⃣  normalScroll()     - Safe speed (1.5s intervals)       ║
-║      ├─ Recommended for most users                          ║
-║      ├─ Less likely to trigger rate limits                  ║
-║      └─ Good for long timelines                             ║
+║  1️⃣  startExtraction()  - Begin extraction on current tab   ║
+║      ├─ Automatically detects Quotes or Reposts tab         ║
+║      ├─ Scrolls through entire tab to find all users        ║
+║      ├─ Extracts usernames, display names, verification     ║
+║      └─ 🏆 MAIN METHOD - Start here                         ║
 ║                                                              ║
-║  2️⃣  fastScroll()       - Fast speed (0.5s intervals)       ║
-║      ├─ For when you're in a hurry                          ║
-║      ├─ May trigger Twitter rate limits                     ║
-║      └─ Best for shorter timelines                          ║
+║  🔄 Manual Tab Switching Workflow:                          ║
+║      ├─ Step 1: Run startExtraction() on first tab          ║
+║      ├─ Step 2: Manually switch to other tab                ║
+║      ├─ Step 3: Call continueOnNewTab() on second tab       ║
+║      └─ Step 4: Use export functions to download data       ║
 ║                                                              ║
-║  3️⃣  ultraFastScroll()  - Maximum speed (0.2s intervals)    ║
-║      ├─ Experimental - use with caution                     ║
-║      ├─ High risk of rate limiting                          ║
-║      └─ Only for small profiles                             ║
+║  📊 Export Functions:                                        ║
+║      ├─ exportAll()        - Combined CSV (all users)       ║
+║      ├─ exportSeparately() - Separate CSVs per tab          ║
+║      ├─ exportJSON()       - Complete JSON with metadata    ║
+║      ├─ exportCurrent()    - Current tab only               ║
+║      └─ showExportOptions() - See all export methods        ║
 ║                                                              ║
-║  🛑 Emergency Stop:     stopScroll()                        ║
+║  🔍 Data Viewing:                                           ║
+║      ├─ showCurrentResults() - Current tab summary          ║
+║      ├─ showAllResults()     - Combined results summary     ║
+║      └─ getDataForAPI()      - Clean data for copy/paste    ║
+║                                                              ║
+║  🛑 Control:                                                ║
+║      └─ stopExtraction()     - Stop current extraction      ║
 ║                                                              ║
 ╠══════════════════════════════════════════════════════════════╣
-║  💡 Usage: Type the method name in console and press Enter  ║
-║     Example: normalScroll()                                 ║
+║  💡 Usage: Navigate to a Twitter post's Quotes or Reposts   ║
+║     tab, then run: startExtraction()                        ║
+║                                                              ║
+║  🧠 Features: Duplicate detection, verification status,     ║
+║     progress tracking, multiple export formats              ║
 ╚══════════════════════════════════════════════════════════════╝
 `);
 
-// Method 1: Normal speed scrolling
-function normalScroll() {
-    let scrollCount = 0;
-    let lastHeight = document.body.scrollHeight;
-    let noNewContentCount = 0;
+// Main extraction function wrapped for manual start
+function startExtraction() {
+    console.log("🚀 Starting Twitter engagement extraction...");
     
-    console.log("🚀 Starting normal speed auto-scroll...");
-    
-    const scrollInterval = setInterval(() => {
-        // Scroll to bottom
-        window.scrollTo(0, document.body.scrollHeight);
-        scrollCount++;
-        
-        console.log(`📜 Scroll #${scrollCount}`);
-        
-        // Wait for content to load
-        setTimeout(() => {
-            const newHeight = document.body.scrollHeight;
-            
-            // Check if we've reached the end
-            if (newHeight === lastHeight) {
-                noNewContentCount++;
-                console.log(`⏳ No new content detected (${noNewContentCount}/3)`);
-                
-                // Stop if no new content for 3 consecutive checks
-                if (noNewContentCount >= 3) {
-                    clearInterval(scrollInterval);
-                    console.log("✅ End of timeline reached!");
-                    console.log(`📊 Total scrolls: ${scrollCount}`);
-                    return;
+    (function() {
+        // Global storage for results
+        if (!window.twitterExtractor) {
+            window.twitterExtractor = {
+                quotesUsers: [],
+                repostsUsers: [],
+                currentExtraction: [],
+                extractionStats: {
+                    totalScrolls: 0,
+                    phases: []
                 }
-            } else {
-                // New content detected, reset counter
-                noNewContentCount = 0;
-                lastHeight = newHeight;
-                console.log("🔄 New content loaded, continuing...");
-            }
-        }, 1000); // Wait 1 second for loading
-        
-    }, 1500); // Scroll every 1.5 seconds
-    
-    // Store interval for emergency stop
-    window.currentScrollInterval = scrollInterval;
-}
-
-// Method 2: Fast speed scrolling
-function fastScroll() {
-    let scrollCount = 0;
-    let lastHeight = document.body.scrollHeight;
-    let noNewContentCount = 0;
-    
-    console.log("🚀 Starting FAST auto-scroll...");
-    console.log("⚠️  Warning: May trigger Twitter rate limits");
-    
-    const scrollInterval = setInterval(() => {
-        window.scrollTo(0, document.body.scrollHeight);
-        scrollCount++;
-        
-        // Log every 10 scrolls to reduce console spam
-        if (scrollCount % 10 === 0) {
-            console.log(`📜 Scroll #${scrollCount}`);
+            };
         }
         
-        setTimeout(() => {
-            const newHeight = document.body.scrollHeight;
+        var extractedUsers = [];
+        var scrollCount = 0;
+        var lastUserCount = 0;
+        var noNewContentCount = 0;
+        var isRunning = true;
+        var currentTab = 'unknown';
+        
+        // System links to ignore
+        var systemLinks = [
+            'notifications', 'messages', 'jobs', 'compose', 'search', 'explore', 
+            'settings', 'bookmarks', 'lists', 'topics', 'moments', 'newsletters',
+            'twitter_ads', 'analytics', 'pro', 'help', 'display', 'keyboard_shortcuts',
+            'accessibility', 'ads', 'business', 'developers', 'media', 'marketing',
+            'i', 'home', 'login', 'signup', 'tos', 'privacy', 'rules', 'cookies'
+        ];
+        
+        console.log("=== MANUAL TWITTER EXTRACTION ===");
+        console.log("Step 1: Extracting current tab...");
+        
+        // Get current tab
+        function getCurrentTab() {
+            var quotesTab = document.querySelector('[data-testid="tab-Quotes"]');
+            var repostsTab = document.querySelector('[data-testid="tab-Reposts"]');
             
-            if (newHeight === lastHeight) {
-                noNewContentCount++;
+            if (quotesTab && quotesTab.getAttribute('aria-selected') === 'true') {
+                return 'quotes';
+            } else if (repostsTab && repostsTab.getAttribute('aria-selected') === 'true') {
+                return 'reposts';
+            }
+            
+            if (window.location.href.indexOf('/quotes') > -1) return 'quotes';
+            if (window.location.href.indexOf('/retweets') > -1) return 'reposts';
+            
+            return 'unknown';
+        }
+        
+        // Check if username is valid
+        function isValidUsername(username) {
+            if (!username || username.length === 0) return false;
+            if (username.length > 15) return false;
+            if (systemLinks.indexOf(username.toLowerCase()) > -1) return false;
+            if (username.indexOf('?') > -1 || username.indexOf('#') > -1) return false;
+            if (username.indexOf('=') > -1 || username.indexOf('&') > -1) return false;
+            if (username.startsWith('intent')) return false;
+            return true;
+        }
+        
+        // Extract users from current page
+        function extractUsers() {
+            var users = [];
+            currentTab = getCurrentTab();
+            
+            // Look for user cells
+            var userCells = document.querySelectorAll('[data-testid="UserCell"]');
+            
+            for (var i = 0; i < userCells.length; i++) {
+                var cell = userCells[i];
+                var userLink = cell.querySelector('a[href^="/"][href*="/"]');
                 
-                // Require 5 checks for fast mode (more scrolls = more checks needed)
+                if (!userLink) continue;
+                
+                var href = userLink.getAttribute('href');
+                var username = href.split('/')[1];
+                
+                if (!isValidUsername(username)) continue;
+                
+                // Get display name
+                var displayNameElement = cell.querySelector('[dir="ltr"] span span') || 
+                                       cell.querySelector('div[dir="ltr"] > span');
+                var displayName = displayNameElement ? displayNameElement.textContent.trim() : '';
+                
+                // Check verification
+                var verified = cell.querySelector('[data-testid="icon-verified"]') !== null;
+                
+                users.push({
+                    username: username,
+                    displayName: displayName,
+                    verified: verified,
+                    tab: currentTab,
+                    timestamp: new Date().toISOString()
+                });
+            }
+            
+            // Fallback to articles if no user cells
+            if (users.length === 0) {
+                var articles = document.querySelectorAll('article[data-testid="tweet"]');
+                
+                for (var i = 0; i < articles.length; i++) {
+                    var article = articles[i];
+                    var userLinks = article.querySelectorAll('a[href^="/"][href*="/"]');
+                    
+                    for (var j = 0; j < userLinks.length; j++) {
+                        var link = userLinks[j];
+                        var href = link.getAttribute('href');
+                        var username = href.split('/')[1];
+                        
+                        if (!isValidUsername(username)) continue;
+                        
+                        // Skip duplicates
+                        var exists = false;
+                        for (var k = 0; k < users.length; k++) {
+                            if (users[k].username === username) {
+                                exists = true;
+                                break;
+                            }
+                        }
+                        if (exists) continue;
+                        
+                        users.push({
+                            username: username,
+                            displayName: '',
+                            verified: false,
+                            tab: currentTab,
+                            timestamp: new Date().toISOString()
+                        });
+                    }
+                }
+            }
+            
+            return users;
+        }
+        
+        // Main extraction function
+        function performExtraction() {
+            if (!isRunning) return;
+            
+            var currentUsers = extractUsers();
+            
+            // Add new users
+            for (var i = 0; i < currentUsers.length; i++) {
+                var user = currentUsers[i];
+                var exists = false;
+                
+                for (var j = 0; j < extractedUsers.length; j++) {
+                    if (extractedUsers[j].username === user.username) {
+                        exists = true;
+                        break;
+                    }
+                }
+                
+                if (!exists) {
+                    extractedUsers.push(user);
+                }
+            }
+            
+            scrollCount++;
+            console.log("Tab: " + currentTab + " - Scroll #" + scrollCount + " - Users: " + extractedUsers.length);
+            
+            // Show new users
+            if (currentUsers.length > 0) {
+                var newUsers = [];
+                for (var i = 0; i < Math.min(3, currentUsers.length); i++) {
+                    newUsers.push("@" + currentUsers[i].username);
+                }
+                console.log("Recent: " + newUsers.join(", "));
+            }
+            
+            // Check for completion
+            if (extractedUsers.length === lastUserCount) {
+                noNewContentCount++;
+                console.log("No new users (" + noNewContentCount + "/5)");
+                
                 if (noNewContentCount >= 5) {
-                    clearInterval(scrollInterval);
-                    console.log("✅ End of timeline reached!");
-                    console.log(`📊 Total scrolls: ${scrollCount}`);
+                    console.log("=== TAB EXTRACTION COMPLETE ===");
+                    finishCurrentTab();
                     return;
                 }
             } else {
                 noNewContentCount = 0;
-                lastHeight = newHeight;
+                lastUserCount = extractedUsers.length;
             }
-        }, 300); // Shorter wait time
-        
-    }, 500); // Scroll every 0.5 seconds
-    
-    window.currentScrollInterval = scrollInterval;
-}
-
-// Method 3: Ultra-fast scrolling (experimental)
-function ultraFastScroll() {
-    let scrollCount = 0;
-    let lastHeight = document.body.scrollHeight;
-    let noNewContentCount = 0;
-    
-    console.log("🚀 Starting ULTRA-FAST auto-scroll...");
-    console.log("⚠️  WARNING: High risk of rate limiting!");
-    console.log("💡 Recommended only for small profiles");
-    
-    const scrollInterval = setInterval(() => {
-        window.scrollTo(0, document.body.scrollHeight);
-        scrollCount++;
-        
-        // Log every 20 scrolls to reduce console spam
-        if (scrollCount % 20 === 0) {
-            console.log(`📜 Scroll #${scrollCount}`);
+            
+            // Continue scrolling
+            window.scrollTo(0, document.body.scrollHeight);
+            setTimeout(performExtraction, 3000);
         }
         
-        setTimeout(() => {
-            const newHeight = document.body.scrollHeight;
+        // Finish current tab and store results
+        function finishCurrentTab() {
+            var tab = getCurrentTab();
             
-            if (newHeight === lastHeight) {
-                noNewContentCount++;
-                
-                if (noNewContentCount >= 8) {
-                    clearInterval(scrollInterval);
-                    console.log("✅ End of timeline reached!");
-                    console.log(`📊 Total scrolls: ${scrollCount}`);
-                    return;
-                }
-            } else {
-                noNewContentCount = 0;
-                lastHeight = newHeight;
+            console.log("Finished extracting " + tab + " tab");
+            console.log("Users found: " + extractedUsers.length);
+            
+            // Store results in global object
+            if (tab === 'quotes') {
+                window.twitterExtractor.quotesUsers = extractedUsers.slice();
+            } else if (tab === 'reposts') {
+                window.twitterExtractor.repostsUsers = extractedUsers.slice();
             }
-        }, 100); // Very short wait time
+            
+            window.twitterExtractor.currentExtraction = extractedUsers.slice();
+            window.twitterExtractor.extractionStats.totalScrolls += scrollCount;
+            window.twitterExtractor.extractionStats.phases.push({
+                tab: tab,
+                users: extractedUsers.length,
+                scrolls: scrollCount,
+                timestamp: new Date().toISOString()
+            });
+            
+            // Show current results
+            displayCurrentResults();
+            
+            // Instructions for next step
+            console.log("\n=== NEXT STEPS ===");
+            console.log("1. Manually switch to the other tab (Quotes/Reposts)");
+            console.log("2. Wait for the tab to load completely");
+            console.log("3. Call: continueOnNewTab()");
+            console.log("\nOr finish here:");
+            console.log("- showExportOptions() : See all export methods");
+            console.log("- exportCurrent() : Export current tab only");
+            console.log("- showCurrentResults() : See current tab results");
+            
+            // Check if this completes both tabs
+            var extractor = window.twitterExtractor;
+            if (extractor.quotesUsers.length > 0 && extractor.repostsUsers.length > 0) {
+                window.finalizeExtraction();
+            }
+            
+            isRunning = false;
+        }
         
-    }, 200); // Scroll every 0.2 seconds
+        // Display current tab results
+        function displayCurrentResults() {
+            var verified = [];
+            var regular = [];
+            
+            for (var i = 0; i < extractedUsers.length; i++) {
+                if (extractedUsers[i].verified) {
+                    verified.push(extractedUsers[i]);
+                } else {
+                    regular.push(extractedUsers[i]);
+                }
+            }
+            
+            console.log("\n=== CURRENT TAB RESULTS ===");
+            console.log("Tab: " + currentTab);
+            console.log("Total users: " + extractedUsers.length);
+            console.log("Verified: " + verified.length);
+            console.log("Regular: " + regular.length);
+            
+            if (verified.length > 0) {
+                console.log("\nVerified users:");
+                for (var i = 0; i < verified.length; i++) {
+                    console.log("  @" + verified[i].username + 
+                               (verified[i].displayName ? " - " + verified[i].displayName : ""));
+                }
+            }
+            
+            console.log("\nSample regular users:");
+            for (var i = 0; i < Math.min(10, regular.length); i++) {
+                console.log("  @" + regular[i].username + 
+                           (regular[i].displayName ? " - " + regular[i].displayName : ""));
+            }
+            
+            if (regular.length > 10) {
+                console.log("  ... and " + (regular.length - 10) + " more");
+            }
+        }
+        
+        // Start first extraction
+        currentTab = getCurrentTab();
+        console.log("Current tab detected: " + currentTab);
+        console.log("Starting extraction in 3 seconds...");
+        console.log("Use stopExtraction() to stop anytime");
+        console.log("\n💡 Available commands:");
+        console.log("- stopExtraction() : Stop current extraction");
+        console.log("- showExportOptions() : See all export methods");
+        
+        setTimeout(performExtraction, 3000);
+    })();
+}
+
+// Global functions for manual control
+window.continueOnNewTab = function() {
+    console.log("=== CONTINUING ON NEW TAB ===");
     
-    window.currentScrollInterval = scrollInterval;
-}
+    // This will restart the extraction process for the new tab
+    startExtraction();
+};
 
-// Emergency stop function
-function stopScroll() {
-    if (window.currentScrollInterval) {
-        clearInterval(window.currentScrollInterval);
-        console.log("🛑 Scrolling stopped manually!");
-        window.currentScrollInterval = null;
+window.showCurrentResults = function() {
+    var extractor = window.twitterExtractor;
+    if (extractor && extractor.currentExtraction.length > 0) {
+        var verified = [];
+        var regular = [];
+        
+        for (var i = 0; i < extractor.currentExtraction.length; i++) {
+            if (extractor.currentExtraction[i].verified) {
+                verified.push(extractor.currentExtraction[i]);
+            } else {
+                regular.push(extractor.currentExtraction[i]);
+            }
+        }
+        
+        console.log("\n=== CURRENT TAB RESULTS ===");
+        console.log("Total users: " + extractor.currentExtraction.length);
+        console.log("Verified: " + verified.length);
+        console.log("Regular: " + regular.length);
+        
+        if (verified.length > 0) {
+            console.log("\nVerified users:");
+            for (var i = 0; i < verified.length; i++) {
+                console.log("  @" + verified[i].username + 
+                           (verified[i].displayName ? " - " + verified[i].displayName : ""));
+            }
+        }
+        
+        console.log("\nSample regular users:");
+        for (var i = 0; i < Math.min(10, regular.length); i++) {
+            console.log("  @" + regular[i].username + 
+                       (regular[i].displayName ? " - " + regular[i].displayName : ""));
+        }
+        
+        if (regular.length > 10) {
+            console.log("  ... and " + (regular.length - 10) + " more");
+        }
     } else {
-        console.log("ℹ️  No active scrolling to stop");
+        console.log("No current extraction data found. Run startExtraction() first.");
     }
-}
+};
 
-// Show instructions again
-function scrollShowHelp() {
-    console.log(`
-📋 Available Commands:
-• normalScroll()     - Start normal speed scrolling
-• fastScroll()       - Start fast speed scrolling  
-• ultraFastScroll()  - Start ultra-fast scrolling
-• stopScroll()       - Emergency stop
-• showHelp()         - Show this help again
-    `);
-}
+window.showAllResults = function() {
+    var extractor = window.twitterExtractor;
+    if (!extractor) {
+        console.log("No extraction data found. Run startExtraction() first.");
+        return;
+    }
+    
+    var allUsers = [];
+    var duplicates = 0;
+    
+    console.log("=== ALL EXTRACTION RESULTS ===");
+    console.log("Quotes users: " + extractor.quotesUsers.length);
+    console.log("Reposts users: " + extractor.repostsUsers.length);
+    
+    // Combine and find duplicates
+    allUsers = extractor.quotesUsers.slice();
+    
+    for (var i = 0; i < extractor.repostsUsers.length; i++) {
+        var user = extractor.repostsUsers[i];
+        var exists = false;
+        
+        for (var j = 0; j < allUsers.length; j++) {
+            if (allUsers[j].username === user.username) {
+                exists = true;
+                duplicates++;
+                break;
+            }
+        }
+        
+        if (!exists) {
+            allUsers.push(user);
+        }
+    }
+    
+    console.log("Duplicates found: " + duplicates);
+    console.log("Total unique users: " + allUsers.length);
+    
+    return allUsers;
+};
 
-console.log("✅ Script loaded! Choose your scrolling method above.");
-console.log("💡 Type showHelp() to see commands again.");
+window.exportCurrent = function() {
+    var extractor = window.twitterExtractor;
+    if (!extractor || !extractor.currentExtraction.length) {
+        console.log("No current extraction data to export. Run startExtraction() first.");
+        return;
+    }
+    
+    var csv = "Username,Display Name,Verified,Tab,Timestamp\n";
+    for (var i = 0; i < extractor.currentExtraction.length; i++) {
+        var user = extractor.currentExtraction[i];
+        csv += user.username + ',"' + (user.displayName || '') + '",' + 
+               user.verified + ',' + user.tab + ',"' + user.timestamp + '"\n';
+    }
+    
+    var blob = new Blob([csv], { type: 'text/csv' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'twitter_current_tab_users.csv';
+    a.click();
+    console.log("Current tab CSV downloaded");
+};
+
+window.exportAll = function() {
+    var allUsers = window.showAllResults();
+    if (!allUsers || allUsers.length === 0) {
+        console.log("No data to export. Run extraction first.");
+        return;
+    }
+    
+    var csv = "Username,Display Name,Verified,Tab,Timestamp\n";
+    for (var i = 0; i < allUsers.length; i++) {
+        var user = allUsers[i];
+        csv += user.username + ',"' + (user.displayName || '') + '",' + 
+               user.verified + ',' + user.tab + ',"' + user.timestamp + '"\n';
+    }
+    
+    var blob = new Blob([csv], { type: 'text/csv' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'twitter_all_engagement_users.csv';
+    a.click();
+    console.log("Complete CSV downloaded");
+};
+
+window.exportSeparately = function() {
+    var extractor = window.twitterExtractor;
+    if (!extractor) {
+        console.log("No extraction data found.");
+        return;
+    }
+    
+    // Export Quotes users
+    if (extractor.quotesUsers.length > 0) {
+        var quotesCSV = "Username,Display Name,Verified,Timestamp\n";
+        for (var i = 0; i < extractor.quotesUsers.length; i++) {
+            var user = extractor.quotesUsers[i];
+            quotesCSV += user.username + ',"' + (user.displayName || '') + '",' + 
+                        user.verified + ',"' + user.timestamp + '"\n';
+        }
+        
+        var blob1 = new Blob([quotesCSV], { type: 'text/csv' });
+        var url1 = URL.createObjectURL(blob1);
+        var a1 = document.createElement('a');
+        a1.href = url1;
+        a1.download = 'twitter_quotes_users.csv';
+        a1.click();
+        console.log("Quotes CSV downloaded");
+    }
+    
+    // Export Reposts users
+    if (extractor.repostsUsers.length > 0) {
+        var repostsCSV = "Username,Display Name,Verified,Timestamp\n";
+        for (var i = 0; i < extractor.repostsUsers.length; i++) {
+            var user = extractor.repostsUsers[i];
+            repostsCSV += user.username + ',"' + (user.displayName || '') + '",' + 
+                         user.verified + ',"' + user.timestamp + '"\n';
+        }
+        
+        var blob2 = new Blob([repostsCSV], { type: 'text/csv' });
+        var url2 = URL.createObjectURL(blob2);
+        var a2 = document.createElement('a');
+        a2.href = url2;
+        a2.download = 'twitter_reposts_users.csv';
+        a2.click();
+        console.log("Reposts CSV downloaded");
+    }
+};
+
+window.exportJSON = function() {
+    var extractor = window.twitterExtractor;
+    if (!extractor) {
+        console.log("No extraction data found.");
+        return;
+    }
+    
+    var allUsers = window.showAllResults() || [];
+    
+    var data = {
+        extractionSummary: {
+            totalUniqueUsers: allUsers.length,
+            quotesUsers: extractor.quotesUsers.length,
+            repostsUsers: extractor.repostsUsers.length,
+            duplicatesFound: extractor.quotesUsers.length + extractor.repostsUsers.length - allUsers.length,
+            extractedAt: new Date().toISOString(),
+            phases: extractor.extractionStats.phases
+        },
+        allUsers: allUsers,
+        quotesUsers: extractor.quotesUsers,
+        repostsUsers: extractor.repostsUsers
+    };
+    
+    var json = JSON.stringify(data, null, 2);
+    var blob = new Blob([json], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'twitter_engagement_data.json';
+    a.click();
+    console.log("JSON data downloaded");
+};
+
+window.getDataForAPI = function() {
+    var extractor = window.twitterExtractor;
+    if (!extractor) {
+        console.log("No extraction data found.");
+        return {};
+    }
+    
+    var allUsers = window.showAllResults() || [];
+    
+    return {
+        usernames: allUsers.map(function(user) { return user.username; }),
+        verified: allUsers.filter(function(user) { return user.verified; }).map(function(user) { return user.username; }),
+        quotes: extractor.quotesUsers.map(function(user) { return user.username; }),
+        reposts: extractor.repostsUsers.map(function(user) { return user.username; })
+    };
+};
+
+window.stopExtraction = function() {
+    console.log("Extraction stopped manually");
+    // Note: The actual stopping logic will be handled by the individual extraction instance
+};
+
+// Show all export options
+window.showExportOptions = function() {
+    console.log("\n=== EXPORT OPTIONS ===");
+    console.log("📊 Data Summary:");
+    console.log("- exportAll() : Download combined CSV (all users, one file)");
+    console.log("- exportSeparately() : Download separate CSV files (quotes.csv + reposts.csv)");
+    console.log("- exportJSON() : Download complete data as JSON");
+    console.log("- exportCurrent() : Download current tab only");
+    
+    console.log("\n🔍 Data Access:");
+    console.log("- showAllResults() : Display summary in console");
+    console.log("- getDataForAPI() : Get clean data for copy/paste");
+    console.log("- window.twitterExtractor.quotesUsers : Raw quotes data");
+    console.log("- window.twitterExtractor.repostsUsers : Raw reposts data");
+    
+    console.log("\n📝 Example Usage:");
+    console.log("1. exportAll() → 'twitter_all_engagement_users.csv'");
+    console.log("2. exportSeparately() → 'quotes_users.csv' + 'reposts_users.csv'");
+    console.log("3. exportJSON() → Complete data with metadata");
+    
+    var extractor = window.twitterExtractor;
+    if (extractor && (extractor.quotesUsers.length > 0 || extractor.repostsUsers.length > 0)) {
+        console.log("\n📈 Current Data:");
+        console.log("- Quotes users: " + extractor.quotesUsers.length);
+        console.log("- Reposts users: " + extractor.repostsUsers.length);
+        
+        if (extractor.quotesUsers.length > 0 && extractor.repostsUsers.length > 0) {
+            var allUsers = [];
+            var duplicates = 0;
+            
+            allUsers = extractor.quotesUsers.slice();
+            for (var i = 0; i < extractor.repostsUsers.length; i++) {
+                var user = extractor.repostsUsers[i];
+                var exists = false;
+                for (var j = 0; j < allUsers.length; j++) {
+                    if (allUsers[j].username === user.username) {
+                        exists = true;
+                        duplicates++;
+                        break;
+                    }
+                }
+                if (!exists) allUsers.push(user);
+            }
+            
+            console.log("- Total unique: " + allUsers.length);
+            console.log("- Duplicates: " + duplicates);
+        }
+    }
+};
+
+// Auto-show export options when both tabs are done
+window.finalizeExtraction = function() {
+    var extractor = window.twitterExtractor;
+    if (extractor && extractor.quotesUsers.length > 0 && extractor.repostsUsers.length > 0) {
+        console.log("\n🎉 EXTRACTION COMPLETE! Both tabs processed.");
+        window.showExportOptions();
+        console.log("\n💡 Quick Export:");
+        console.log("→ exportAll() for most common use");
+        console.log("→ exportSeparately() to keep quotes and reposts separate");
+    }
+};
+
+console.log("✅ Script loaded! Choose your extraction method above.");
+console.log("💡 Type showExportOptions() to see export methods anytime.");
